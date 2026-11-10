@@ -20,11 +20,6 @@ Scripts executed in Google Earth Engine web editor for remote‑sensing pre‑pr
    Function: Compute July‑September annual mean soil moisture, generate multi‑year composite soil‑moisture raster; export GeoTIFF outputs.
    Requirement: Update study‑area GEE asset path.
 
-3. SPEI3_Jul_Sep_2021.js
-   Input: TerraClimate precipitation and potential evapotranspiration
-   Function: Calculate 3‑month standardized precipitation‑evapotranspiration index (SPEI‑3) for July‑September; produce annual time‑series and multi‑year composite raster.
-   Requirement: Update study‑area GEE asset path.
-
 ### MATLAB scripts (*.m)
 Perform pixel‑wise trend computation, interannual‑variability metrics and publication‑quality boxplot visualization.
 
