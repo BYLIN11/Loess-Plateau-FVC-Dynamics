@@ -1,0 +1,105 @@
+
+clear;
+clc;
+
+%% === 1. Read the Reference File and Retrieve Geographic Information ===
+fprintf('Reading the SPEI-3 reference data...\n');
+input_folder = './data/SPEI/Annual_SPEI3/';
+first_file = [input_folder, 'SPEI3_2001_GS_mean.tif']; 
+
+try
+    [A, R] = geotiffread(first_file);
+    hasGeo = 1;
+    fprintf('Geographic reference information successfully retrieved!\n');
+catch
+    A = imread(first_file, 1);
+    hasGeo = 0;
+    R = [];
+    fprintf('Warning: Unable to read geographic reference information. The output will be saved as a standard TIFF.\n');
+end
+
+if ndims(A) == 3
+    A = A(:, :, 1);
+end
+[m, n] = size(A);
+fprintf('Raster dimensions: %d rows x %d columns\n', m, n);
+cd = 21;  % 21 years from 2001 to 2021
+
+%% === 2. Load Annual SPEI-3 Data for 2001-2021 ===
+datasum = zeros(m * n, cd) + NaN;
+p = 1;
+
+for year = 2001:2021
+    % Match the file naming convention: SPEI3_Year_GS_mean.tif
+    filename = sprintf('%sSPEI3_%d_GS_mean.tif', input_folder, year); 
+    
+    if ~exist(filename, 'file')
+        error('File not found: %s\nPlease check the file path and filename!', filename);
+    end
+    
+    data = imread(filename, 1);
+    if ndims(data) == 3
+        data = data(:, :, 1);
+    end
+    data = double(data);
+    
+    % Remove abnormal SPEI values (the theoretical SPEI range is generally -4 to 4)
+    % Values outside -5 to 5 are treated as invalid or background values
+    data(data < -5 | data > 5) = NaN;
+    
+    % Reshape the raster into a one-dimensional column vector and store it
+    datasum(:, p) = reshape(data, m * n, 1);
+    fprintf('Successfully loaded: SPEI3_%d_GS_mean.tif\n', year);
+    p = p + 1;
+end
+
+%% === 3. Calculate Pixel-wise Sen's Slope ===
+fprintf('\nCalculating pixel-wise SPEI-3 Sen trend slopes across the study area. Please wait...\n');
+sen_result = zeros(m * n, 1) + NaN;
+
+% Construct pairwise index matrices to improve computational efficiency
+comb_k = [];
+comb_j = [];
+time_diff = [];
+for k = 2:cd
+    for j = 1:(k - 1)
+        comb_k = [comb_k; k];
+        comb_j = [comb_j; j];
+        time_diff = [time_diff; (k - j)];
+    end
+end
+
+for i = 1:size(datasum, 1)
+    % Display processing progress every 100,000 pixels
+    if mod(i, 100000) == 0
+        fprintf('Processing progress: %.1f%%\n', i/size(datasum,1)*100);
+    end
+    
+    data = datasum(i, :);
+    % Require at least three valid annual observations
+    if sum(~isnan(data)) >= 3
+        cz = data(comb_k) - data(comb_j);
+        slopes = cz' ./ time_diff;
+        sen_result(i) = median(slopes(~isnan(slopes)));
+    end
+end
+
+% Reshape the one-dimensional result vector into a two-dimensional raster
+sen_result = reshape(sen_result, m, n);
+
+%% === 4. Save the Final SPEI-3 Sen's Slope GeoTIFF ===
+fprintf('\nSaving the Sen slope results...\n');
+output_folder = './output/SPEI/Result_Slope/';
+if ~exist(output_folder, 'dir')
+    mkdir(output_folder);
+end
+
+output_file = [output_folder, 'SPEI3_GS_Sen_slope.tif'];
+
+if hasGeo == 1
+    geotiffwrite(output_file, single(sen_result), R);
+    fprintf('Success! The SPEI-3 trend slope raster has been saved to:\n%s (Geographic reference information preserved)\n', output_file);
+else
+    imwrite(uint8((sen_result-nanmin(sen_result(:)))/nanmax(sen_result(:))*255), output_file);
+    fprintf('Success! The result has been saved as a standard TIFF without geographic reference information.\n');
+end
