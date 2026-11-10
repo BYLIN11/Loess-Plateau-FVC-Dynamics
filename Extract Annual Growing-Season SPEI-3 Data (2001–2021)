@@ -1,0 +1,97 @@
+
+clear;
+clc;
+
+%% === 1. Set File Paths and Parameters ===
+nc_file = './data/SPEI/CHM_SPEI-3.nc';        % Full path to the NetCDF file
+output_folder = './data/SPEI/Annual_SPEI3/';   % Output directory
+
+if ~exist(output_folder, 'dir')
+    mkdir(output_folder);
+end
+
+%% === 2. Read NetCDF Structure and Automatically Identify the Data Variable ===
+fprintf('Reading %s ...\n', nc_file);
+
+% Extract latitude, longitude, and time coordinates
+lat = ncread(nc_file, 'lat');
+lon = ncread(nc_file, 'lon');
+time = ncread(nc_file, 'time');
+
+% Automatically identify the SPEI data variable
+info = ncinfo(nc_file);
+all_vars = {info.Variables.Name};
+
+% Exclude coordinate variables and identify the data variable
+coord_vars = {'lat', 'latitude', 'lon', 'longitude', 'time', 'crs', 'crs_wkt', 'spatial_ref'};
+data_var_idx = ~ismember(lower(all_vars), lower(coord_vars));
+matched_vars = all_vars(data_var_idx);
+
+if isempty(matched_vars)
+    error('No data variable was identified. Please check the NetCDF file structure!');
+else
+    var_name = matched_vars{1}; % Automatically obtain the actual data variable name
+    fprintf('Data variable successfully identified: ''%s''\n', var_name);
+end
+
+% Get the number of grid cells
+nlon = length(lon);
+nlat = length(lat);
+
+fprintf('Longitude range: %.2f ~ %.2f (%d grid cells)\n', min(lon(:)), max(lon(:)), nlon);
+fprintf('Latitude range: %.2f ~ %.2f (%d grid cells)\n', min(lat(:)), max(lat(:)), nlat);
+
+%% === 3. Construct the Geographic Reference Object ===
+latlim = [double(min(lat(:))), double(max(lat(:)))];
+lonlim = [double(min(lon(:))), double(max(lon(:)))];
+
+% [Number of rows (latitude), number of columns (longitude)]
+rasterSize = [nlat, nlon]; 
+
+% Create the geographic reference object
+R = georefcells(latlim, lonlim, rasterSize, 'ColumnsStartFrom', 'north');
+
+%% === 4. Calculate Time Indices for 2001-2021 ===
+% The CHM dataset is assumed to start in January 1961
+base_year = 1961; 
+start_year = 2001;
+end_year   = 2021;
+
+%% === 5. Extract and Generate Annual Growing-Season SPEI-3 GeoTIFFs ===
+fprintf('\n================ Extracting Growing-Season (July-September) SPEI-3 for 2001-2021 ================\n');
+
+for yr = start_year:end_year
+    % Calculate the time indices for all 12 months of the current year
+    month_start = (yr - base_year) * 12 + 1;
+    month_indices = month_start : (month_start + 11);
+    
+    % Read the 12 monthly data layers for the current year [lon, lat, 12]
+    spei_12mon = ncread(nc_file, var_name, [1 1 month_indices(1)], [Inf Inf 12]);
+    spei_12mon = double(spei_12mon);
+    
+    % Remove fill values and abnormal values (normal SPEI values generally range from -4 to 4)
+    spei_12mon(spei_12mon < -10 | spei_12mon > 10) = NaN;
+    
+    % ------------------------------------------------------------
+    % Calculate the mean SPEI-3 for the growing season (July-September)
+    % Monthly layers 7, 8, and 9 correspond to July, August, and September
+    annual_spei = mean(spei_12mon(:, :, 7:9), 3, 'omitnan');
+    % ------------------------------------------------------------
+    
+    % Adjust matrix orientation to match the geographic coordinate system: [lon, lat] -> [lat, lon]
+    annual_spei_2d = annual_spei'; 
+    
+    % Flip the image vertically if latitude is in ascending order (south to north)
+    % to ensure a north-up raster orientation
+    if lat(1) < lat(end)
+        annual_spei_2d = flipud(annual_spei_2d);
+    end
+    
+    % Export the GeoTIFF file
+    out_name = sprintf('%sSPEI3_%d_GS_mean.tif', output_folder, yr);
+    geotiffwrite(out_name, single(annual_spei_2d), R);
+    
+    fprintf('Successfully exported: SPEI3_%d_GS_mean.tif\n', yr);
+end
+
+fprintf('\nProcessing completed! Growing-season (July-September) SPEI-3 data for 2001-2021 have been saved to:\n%s\n', output_folder);
